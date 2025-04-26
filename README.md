@@ -64,7 +64,6 @@ et votre mot de passe d'application Google (pas votre mot de passe normal).
 ### 5 Installer les bibliothèques nécessaires
 Toujours dans l'environnement virtuel, installez les dépendances suivantes :
 ```bash
-cd BackEndPFA
 pip install djangorestframework
 pip install django-cors-headers
 pip install python-dotenv
@@ -72,6 +71,5 @@ pip install python-dotenv
 
 ### 6. Lancer le serveur Django
 ```bash
-cd BackEndPFA
 python manage.py runserver
 ```
