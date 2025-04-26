@@ -138,8 +138,8 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
-EMAIL_HOST_USER = 'anejjarihssane@gmail.com'
-EMAIL_HOST_PASSWORD = 'vqto cwlh hdiy xoro'
+EMAIL_HOST_USER = 'votre email'
+EMAIL_HOST_PASSWORD = 'votre google app password'
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
