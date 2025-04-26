@@ -6,6 +6,9 @@ Ce guide vous aide à configurer et lancer le backend du projet PFA en local.
 
 ## 🔧 Étapes à suivre
 
+
+ Avant TOUT  : Concernant la version de python, vous devez disposer au moins de la version 3.8.
+
 ### 1. Cloner le dépôt Git
 
 Dans un dossier de votre choix, ouvrez un terminal et exécutez :
