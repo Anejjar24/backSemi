@@ -74,5 +74,9 @@ pip install python-dotenv
 
 ### 6. Lancer le serveur Django
 ```bash
+python manage.py migrate
+```
+pour lancer projet:
+```bash
 python manage.py runserver
 ```
