@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Code Generator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 2em;
+            max-width: 600px;
+            margin: auto;
+        }
+        textarea, input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 1em 0;
+        }
+        #response {
+            white-space: pre-wrap;
+            background: #f4f4f4;
+            padding: 1em;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Générateur de code Python 🐍</h1>
+    
+    <label for="prompt">Prompt :</label>
+    <textarea id="prompt" placeholder="Décris ce que tu veux que le modèle génère..."></textarea>
+    
+    <label for="csvInput">Importer un fichier CSV :</label>
+    <input type="file" id="csvInput" accept=".csv" />
+    
+    <button onclick="generate()">Envoyer</button>
+
+    <h2>Résultat :</h2>
+    <div id="response">...</div>
+
+    <script>
+        function generate() {
+            const prompt = document.getElementById('prompt').value;
+            const fileInput = document.getElementById('csvInput');
+            const file = fileInput.files[0];
+
+            
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const csvContent = e.target.result;
+
+                fetch('/generate/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        csv: csvContent
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('response').innerText = data.response || JSON.stringify(data);
+                })
+                .catch(err => {
+                    document.getElementById('response').innerText = 'Erreur: ' + err;
+                });
+            };
+            reader.readAsText(file);
+        }
+    </script>
+</body>
+</html>
