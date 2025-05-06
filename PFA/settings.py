@@ -185,7 +185,7 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
 }
-<<<<<<< HEAD
+
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -203,5 +203,3 @@ LOGGING = {
         'level': 'INFO',
     },
 }
-=======
->>>>>>> 3f84e53adc06d60302027d940850b8cee175ce82
