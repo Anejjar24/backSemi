@@ -71,4 +71,3 @@ def activate(request, uidb64, token):
         return render(request, 'authentication/email_activation/activation_successful.html')
     else:
         return render(request, 'authentication/email_activation/activation_unsuccessful.html')
-

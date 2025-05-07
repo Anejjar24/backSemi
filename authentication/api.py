@@ -113,9 +113,7 @@ def logout_api(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def password_reset_request_api(request):
-    """
-    API endpoint to handle password reset request (forgot password)
-    """
+    
     email = request.data.get('email')
 
     if not email:
@@ -124,17 +122,37 @@ def password_reset_request_api(request):
             "message": "Email is required"
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    form = PasswordResetForm({'email': email})
-
-    if form.is_valid():
+    try:
+        # Import traceback for detailed error reporting
+        import traceback
+        
+        # Simplify the query as much as possible
         try:
-            user = next(form.get_users(email))
-        except StopIteration:
+            # First try with exact match (case sensitive)
+            user = User.objects.filter(email=email).first()
+        except Exception as db_error:
+            print(f"First query attempt failed: {str(db_error)}")
+            print(traceback.format_exc())
+            # If that fails, try a different approach: manually check emails
+            try:
+                all_users = User.objects.all()
+                user = None
+                for u in all_users:
+                    if u.email.lower() == email.lower() and u.is_active:
+                        user = u
+                        break
+            except Exception as fallback_error:
+                print(f"Fallback query failed: {str(fallback_error)}")
+                print(traceback.format_exc())
+                raise
+
+        if not user:
             return Response({
                 "success": False,
-                "message": "User with this email does not exist."
+                "message": "User with this email does not exist or is not active."
             }, status=status.HTTP_400_BAD_REQUEST)
-
+        
+        # Generate token
         token = default_token_generator.make_token(user)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         current_site = get_current_site(request)
@@ -163,11 +181,13 @@ def password_reset_request_api(request):
             "success": True,
             "message": "Password reset email has been sent."
         })
-    else:
+    except Exception as e:
+        print(f"Password reset error: {str(e)}")
+        print(traceback.format_exc())  # Print full traceback for debugging
         return Response({
             "success": False,
-            "message": "Invalid email address"
-        }, status=status.HTTP_400_BAD_REQUEST)
+            "message": "An error occurred during password reset. Please try again later."
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])

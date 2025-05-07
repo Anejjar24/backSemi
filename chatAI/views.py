@@ -3,11 +3,13 @@ import os
 import tempfile
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 import requests
 import pandas as pd
 import io
 import traceback
 import logging
+from .models import Conversation, Message
 
 # Configurez le logging
 logger = logging.getLogger(__name__)
@@ -19,10 +21,11 @@ OLLAMA_API_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "codellama"
 
 @csrf_exempt
+@login_required
 def generate_code(request):
     """
     Vue pour générer du code Python basé sur une requête de l'utilisateur
-    et éventuellement un fichier CSV.
+    et éventuellement un fichier CSV, et sauvegarder la conversation.
     """
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Seules les requêtes POST sont acceptées'}, status=405)
@@ -38,12 +41,14 @@ def generate_code(request):
         body = {}
         csv_content = None
         csv_context = ""
+        conversation_id = None
         
-        # Extraction du prompt/query
+        # Extraction du prompt/query et de l'ID de conversation
         if 'data' in request.POST:
             try:
                 data_json = json.loads(request.POST.get('data', '{}'))
                 query = data_json.get('query', '')
+                conversation_id = data_json.get('conversation_id', None)
             except json.JSONDecodeError:
                 logger.error("Erreur de décodage JSON dans les données POST")
                 return JsonResponse({
@@ -55,6 +60,7 @@ def generate_code(request):
             try:
                 body = json.loads(request.body.decode('utf-8'))
                 query = body.get('prompt', '') or body.get('query', '')
+                conversation_id = body.get('conversation_id', None)
             except json.JSONDecodeError:
                 logger.error("Erreur de décodage JSON dans le corps de la requête")
                 return JsonResponse({
@@ -68,9 +74,28 @@ def generate_code(request):
                 'error': 'La requête doit contenir un prompt ou une query'
             }, status=400)
         
+        # Gestion de la conversation
+        if conversation_id:
+            try:
+                conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+            except Conversation.DoesNotExist:
+                # Si la conversation n'existe pas ou n'appartient pas à l'utilisateur, créer une nouvelle
+                conversation = Conversation.objects.create(
+                    user=request.user,
+                    title=f"Conversation sur {query[:30]}..." if len(query) > 30 else query
+                )
+        else:
+            # Créer une nouvelle conversation
+            conversation = Conversation.objects.create(
+                user=request.user,
+                title=f"Conversation sur {query[:30]}..." if len(query) > 30 else query
+            )
+        
         # Traitement du fichier CSV si présent
+        csv_file_obj = None
         if 'csv_file' in request.FILES:
             csv_file = request.FILES['csv_file']
+            csv_file_obj = csv_file  # Sauvegarde du fichier pour la base de données
             try:
                 # Lire le contenu du fichier avec pandas
                 csv_df = pd.read_csv(csv_file, encoding='utf-8')
@@ -116,6 +141,14 @@ def generate_code(request):
                     'success': False, 
                     'error': f'Erreur lors du traitement du CSV fourni: {str(e)}'
                 }, status=400)
+        
+        # Enregistrer le message de l'utilisateur
+        user_message = Message.objects.create(
+            conversation=conversation,
+            role='user',
+            content=query,
+            csv_file=csv_file_obj
+        )
         
         # Construction du prompt pour Ollama
         system_prompt = (
@@ -183,10 +216,25 @@ Génère un script Python complet qui répond à cette demande.
             if csv_content:
                 result = execute_code_with_csv(code, csv_content)
             
+            # Enregistrer la réponse de l'assistant
+            assistant_message = Message.objects.create(
+                conversation=conversation,
+                role='assistant',
+                content="Code généré",
+                generated_code=code,
+                execution_result=result
+            )
+            
+            # Mettre à jour la conversation
+            conversation.updated_at = assistant_message.created_at
+            conversation.save()
+            
             return JsonResponse({
                 'success': True,
                 'code': code,
-                'result': result
+                'result': result,
+                'conversation_id': conversation.id,
+                'message_id': assistant_message.id
             })
             
         except Exception as e:
@@ -305,6 +353,134 @@ except Exception as e:
                 'errors': f"Erreur d'exécution du code: {str(e)}",
                 'figures': []
             })
-        
 
-       
+@login_required
+def get_conversations(request):
+    """
+    Récupère la liste des conversations de l'utilisateur.
+    """
+    conversations = Conversation.objects.filter(user=request.user)
+    conversations_data = []
+    
+    for conversation in conversations:
+        conversations_data.append({
+            'id': conversation.id,
+            'title': conversation.title,
+            'created_at': conversation.created_at.isoformat(),
+            'updated_at': conversation.updated_at.isoformat(),
+        })
+    
+    return JsonResponse({
+        'success': True,
+        'conversations': conversations_data
+    })
+
+@login_required
+def get_conversation_messages(request, conversation_id):
+    """
+    Récupère les messages d'une conversation spécifique.
+    """
+    try:
+        conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+    except Conversation.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Conversation introuvable'
+        }, status=404)
+    
+    messages = conversation.messages.all()
+    messages_data = []
+    
+    for message in messages:
+        message_data = {
+            'id': message.id,
+            'role': message.role,
+            'content': message.content,
+            'created_at': message.created_at.isoformat(),
+        }
+        
+        if message.generated_code:
+            message_data['generated_code'] = message.generated_code
+        
+        if message.execution_result:
+            message_data['execution_result'] = message.execution_result
+        
+        if message.csv_file:
+            message_data['csv_file'] = message.csv_file.url
+        
+        messages_data.append(message_data)
+    
+    return JsonResponse({
+        'success': True,
+        'conversation': {
+            'id': conversation.id,
+            'title': conversation.title,
+            'created_at': conversation.created_at.isoformat(),
+            'updated_at': conversation.updated_at.isoformat(),
+            'messages': messages_data
+        }
+    })
+
+@csrf_exempt
+@login_required
+def create_conversation(request):
+    """
+    Crée une nouvelle conversation.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Seules les requêtes POST sont acceptées'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        title = data.get('title', 'Nouvelle conversation')
+        
+        conversation = Conversation.objects.create(
+            user=request.user,
+            title=title
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'conversation': {
+                'id': conversation.id,
+                'title': conversation.title,
+                'created_at': conversation.created_at.isoformat(),
+                'updated_at': conversation.updated_at.isoformat()
+            }
+        })
+    
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+@csrf_exempt
+@login_required
+def delete_conversation(request, conversation_id):
+    """
+    Supprime une conversation.
+    """
+    if request.method != 'DELETE':
+        return JsonResponse({'success': False, 'error': 'Seules les requêtes DELETE sont acceptées'}, status=405)
+    
+    try:
+        conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+        conversation.delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Conversation supprimée avec succès'
+        })
+    
+    except Conversation.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Conversation introuvable'
+        }, status=404)
+    
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
