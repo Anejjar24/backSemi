@@ -1,9 +1,3 @@
-"""
-This is a complete fixed version of the views.py file with all f-string backslash issues resolved.
-For all f-strings that might contain Windows paths or backslashes, we've replaced them with forward slashes
-or used string concatenation to avoid the f-string expression backslash errors.
-"""
-
 import json
 import os
 import tempfile
@@ -16,39 +10,30 @@ import traceback
 import logging
 import time
 from django.conf import settings
-##hadu tzadu
 from django.shortcuts import get_object_or_404
-from django.http import JsonResponse
 from .models import Conversation, Message
 from django.contrib.auth.models import User
-from django.views.decorators.csrf import csrf_exempt
-import json
 from django.utils import timezone
 from rest_framework.views import APIView
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from .models import Conversation
 from django.contrib.auth.decorators import login_required
 from django.utils.decorators import method_decorator
-
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
+import base64
 from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
+from builtins import print as builtin_print
 import re
-# Configuration du logging
+
 logger = logging.getLogger(__name__)
-
-# URL de l'API Ollama - avec gestion d'erreur de connexion
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-
-# Configuration du modèle
 MODEL_NAME = "codellama"
 
 @csrf_exempt
 def generate_code(request):
     if request.method != 'POST':
-        return JsonResponse({'success': False, 'error': 'Seules les requêtes POST sont acceptées'}, status=405)
+        return JsonResponse({'success': False, 'error': 'Only POST allowed'}, status=405)
 
     try:
         query = ""
@@ -56,103 +41,74 @@ def generate_code(request):
         csv_context = ""
 
         if 'data' in request.POST:
-            try:
-                data_json = json.loads(request.POST.get('data', '{}'))
-                query = data_json.get('query', '')
-            except json.JSONDecodeError:
-                return JsonResponse({'success': False, 'error': 'Format JSON invalide dans les données'}, status=400)
+            data_json = json.loads(request.POST.get('data', '{}'))
+            query = data_json.get('query', '')
         else:
-            try:
-                body = json.loads(request.body.decode('utf-8'))
-                query = body.get('prompt', '') or body.get('query', '')
-            except json.JSONDecodeError:
-                return JsonResponse({'success': False, 'error': 'Format de requête invalide'}, status=400)
+            body = json.loads(request.body.decode('utf-8'))
+            query = body.get('prompt', '') or body.get('query', '')
 
         if not query:
-            return JsonResponse({'success': False, 'error': 'La requête doit contenir un prompt ou une query'}, status=400)
+            return JsonResponse({'success': False, 'error': 'Prompt is required'}, status=400)
 
         if 'csv_file' in request.FILES:
-            try:
-                csv_file = request.FILES['csv_file']
-                csv_df = pd.read_csv(csv_file, encoding='utf-8')
-                csv_content = csv_df.to_csv(index=False)
-                csv_context = f"CSV Columns: {', '.join(csv_df.columns)}\nPreview:\n{csv_df.head().to_string()}"
-            except Exception as e:
-                return JsonResponse({'success': False, 'error': f'Erreur CSV: {str(e)}'}, status=400)
+            csv_file = request.FILES['csv_file']
+            csv_df = pd.read_csv(csv_file, encoding='utf-8')
+            csv_content = csv_df.to_csv(index=False)
+            csv_context = f"CSV Columns: {', '.join(csv_df.columns)}\nPreview:\n{csv_df.head().to_string()}"
 
         system_prompt = (
-            "Tu es un assistant spécialisé dans la génération de code Python. "
-            "Réponds uniquement avec du code Python exécutable et bien commenté. "
-            "Ne fournis pas d'explications, uniquement du code Python."
+            "Tu es un assistant expert Python. "
+            "Réponds uniquement avec du code Python exécutable, sans aucune explication avant ou après. "
+            "Utilise les noms de colonnes fournis dans fichier csv, ne les invente pas. "
+            "Encadre tout le code dans un bloc markdown comme ceci : ```python ... ``` "
+            "Le code doit contenir une fonction main() et le bloc if __name__ == '__main__'. "
+            "N’inclus aucun texte explicatif ni commentaire après le code."
+           
+
         )
 
-        full_prompt = f"""
-{system_prompt}
+        full_prompt = f"""{system_prompt}
 
 {csv_context}
 
-L'utilisateur demande:
+L'utilisateur demande :
 {query}
 
-Génère un script Python complet qui répond à cette demande.
+Génère un script Python complet :
 ```python
 """
 
-        # Ajout d'un timeout et gestion des erreurs de connexion
-        try:
-            response = requests.post(
-                OLLAMA_API_URL, 
-                json={"model": MODEL_NAME, "prompt": full_prompt, "stream": False},
-                timeout=120  # 60 secondes de timeout
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Erreur Ollama: status={response.status_code}, response={response.text}")
-                return JsonResponse({
-                    'success': False, 
-                    'error': f'Erreur lors de la génération du code: {response.text}'
-                }, status=500)
-                
-            response_data = response.json()
-            generated_text = response_data.get('response', '')
-            
-        except requests.exceptions.ConnectionError:
-            logger.error("Impossible de se connecter au serveur Ollama")
-            return JsonResponse({
-                'success': False, 
-                'error': 'Impossible de se connecter au serveur Ollama. Vérifiez que Ollama est bien démarré.'
-            }, status=503)
-        except requests.exceptions.Timeout:
-            return JsonResponse({
-                'success': False, 
-                'error': 'Le serveur Ollama a mis trop de temps à répondre'
-            }, status=504)
-        except Exception as e:
-            logger.error(f"Erreur de requête Ollama: {str(e)}")
-            return JsonResponse({
-                'success': False, 
-                'error': f'Erreur lors de la communication avec Ollama: {str(e)}'
-            }, status=500)
+        response = requests.post(
+            OLLAMA_API_URL,
+            json={"model": MODEL_NAME, "prompt": full_prompt, "stream": False},
+            timeout=3600
+        )
+        if response.status_code != 200:
+            return JsonResponse({'success': False, 'error': response.text}, status=500)
 
-        # Nettoyage du code généré
-        # D'abord, on essaie de trouver le bloc de code entre les délimiteurs Python
+        response_data = response.json()
+        generated_text = response_data.get('response', '')
+        code_affichage = generated_text.strip()
+
         match = re.search(r"```python\s*(.*?)```", generated_text, re.DOTALL)
-        if match:
-            code_executable = match.group(1).strip()
-        else:
-            # Si pas de délimiteur Python spécifique, on cherche n'importe quel délimiteur code
-            match = re.search(r"```(?:\w*)\s*(.*?)```", generated_text, re.DOTALL)
-            if match:
-                code_executable = match.group(1).strip()
-            else:
-                # Si toujours pas de délimiteur, on prend tout le texte
-                code_executable = generated_text.strip()
+        if not match:
+            match = re.search(r"```(?:\w*)?\s*(.*?)```", generated_text, re.DOTALL)
 
-        # On s'assure que le code ne contient pas de délimiteurs
-        code_executable = code_executable.replace("```python", "").replace("```", "")
-        
-        # Pour l'affichage, on garde le format avec les délimiteurs s'ils existent
-        code_affichage = f"```python\n{code_executable}\n```"
+        code_executable = match.group(1).strip() if match else generated_text.strip()
+        code_executable = re.split(
+            r'\n\s*(In this script|This script|Note that|Note:|Explanation:|Ce script|Notez que|Remarquez que|Remarque :|Remarque:|Explication:|Résultat |Output:)',
+            code_executable,
+            flags=re.IGNORECASE
+        )[0]
+        code_executable = code_executable.replace("```python", "").replace("```", "").strip()
+        code_executable = code_executable.replace("**name**", "__name__")
+
+        main_index = code_executable.rfind("if __name__")
+        if main_index != -1:
+            code_executable = code_executable[:main_index]
+            main_block = re.search(r"(if __name__.*)", generated_text, re.DOTALL)
+            if main_block:
+                code_executable += "\n" + main_block.group(1)
 
         return JsonResponse({
             'success': True,
@@ -162,115 +118,228 @@ Génère un script Python complet qui répond à cette demande.
 
     except Exception as e:
         logger.error(traceback.format_exc())
-        return JsonResponse({'success': False, 'error': f'Erreur inattendue: {str(e)}'}, status=500)
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @csrf_exempt
 def execute_code(request):
     if request.method != 'POST':
-        return JsonResponse({'success': False, 'error': 'Seules les requêtes POST sont acceptées'}, status=405)
+        return JsonResponse({'success': False, 'error': 'Only POST allowed'}, status=405)
 
     try:
         code = ""
         if 'data' in request.POST:
-            try:
-                data_json = json.loads(request.POST.get('data', '{}'))
-                code = data_json.get('code', '')
-            except json.JSONDecodeError:
-                return JsonResponse({'success': False, 'error': 'Format JSON invalide'}, status=400)
+            data_json = json.loads(request.POST.get('data', '{}'))
+            code = data_json.get('code', '')
         else:
-            try:
-                body = json.loads(request.body.decode('utf-8'))
-                code = body.get('code', '')
-            except json.JSONDecodeError:
-                return JsonResponse({'success': False, 'error': 'Format de requête invalide'}, status=400)
+            body = json.loads(request.body.decode('utf-8'))
+            code = body.get('code', '')
 
         if not code:
-            return JsonResponse({'success': False, 'error': 'Aucun code fourni'}, status=400)
+            return JsonResponse({'success': False, 'error': 'No code provided'}, status=400)
 
-        # Suppression de délimiteurs code si présents
-        code = re.sub(r'^```(?:python)?\s*', '', code)
-        code = re.sub(r'```$', '', code)
+        clean_code = re.sub(r'^```(?:python)?\s*', '', code.strip())
+        clean_code = re.sub(r'\s*```$', '', clean_code).strip()
+        clean_code = clean_code.replace("**name**", "__name__")
 
+        csv_filename = None
         csv_content = None
         if 'csv_file' in request.FILES:
-            try:
-                csv_file = request.FILES['csv_file']
-                csv_content = csv_file.read().decode('utf-8')
-            except Exception as e:
-                return JsonResponse({'success': False, 'error': f'Erreur CSV: {str(e)}'}, status=400)
+            uploaded_file = request.FILES['csv_file']
+            csv_filename = uploaded_file.name  # ✅ nom réel du fichier (ex: sales_data.csv)
+            csv_content = uploaded_file.read().decode('utf-8')
 
-        result = execute_code_with_csv(code, csv_content)
+        result = execute_code_with_csv(clean_code, csv_content, csv_filename)
         return JsonResponse({'success': True, 'result': result})
 
     except Exception as e:
-        logger.error(traceback.format_exc())
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
-def execute_code_with_csv(code, csv_content=None):
-    execution_locals = {}
+def execute_code_with_csv(code, csv_content=None, csv_filename=None):
+    """
+    Exécute le code Python généré avec un fichier CSV optionnel et capture la sortie et les figures
+    Version améliorée qui gère mieux les cas où le code contient du texte explicatif
+    """
+    import sys
+    import matplotlib
+    matplotlib.use('Agg')  # Important: définir le backend avant d'importer pyplot
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+    import pandas as pd
+    import io
+    import builtins
+    import base64
+    import csv
+    
+    logger = logging.getLogger(__name__)
+    
+    # ========== PHASE 1: NETTOYAGE AVANCÉ DU CODE ==========
+    # Nettoyer les balises markdown
+    clean_code = re.sub(r"```[\w]*", "", code) 
+    clean_code = re.sub(r"```", "", clean_code)
+    
+    # Remplacer **name** par __name__
+    clean_code = clean_code.replace("**name**", "__name__")
+    
+    # IMPORTANT: Extraire uniquement le bloc de code Python valide
+    # Méthode 1: Utiliser la première phrase explicative comme séparateur
+    patterns = [
+        r'\n\s*(?:Notez que|Note that|Remarque|Explanation:|Explication:|This script|Ce script|Output:)',
+        r'\n\s*(?:Pour utiliser|To use)',
+        r'\n\s*(?:Dans ce code|In this code)'
+    ]
+    
+    for pattern in patterns:
+        parts = re.split(pattern, clean_code, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            clean_code = parts[0]
+            break
+    
+    # Méthode 2: Détecter la fin du code valide (recherche de la dernière instruction Python valide)
+    lines = clean_code.splitlines()
+    valid_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Si la ligne ressemble à du texte explicatif plutôt qu'à du code Python, arrêtez
+        if stripped and not stripped.startswith('#') and not re.match(r'^[a-zA-Z0-9_\s\(\)\[\]\{\}:=<>+\-*/,.\'\"]+$', stripped):
+            # Vérifie si ça ressemble plus à une explication qu'à du code
+            if len(stripped.split()) > 5 and not any(x in stripped for x in ['(', ')', '=', '+', '-', '*', '/', '[', ']']):
+                break
+        valid_lines.append(line)
+    
+    # Nettoyage final: supprimer les lignes vides à la fin
+    while valid_lines and not valid_lines[-1].strip():
+        valid_lines.pop()
+    
+    clean_code = "\n".join(valid_lines).strip()
+    
+    # ========== PHASE 2: EXÉCUTION ==========
     execution_globals = {
-        'pd': pd,
-        'np': __import__('numpy'),
-        'plt': __import__('matplotlib.pyplot'),
-        'io': io,
-        'StringIO': io.StringIO
+        'pd': pd, 'np': np, 'plt': plt, 'sns': sns,
+        'io': io, 'sys': sys, 'StringIO': StringIO,
+        'base64': base64, 'builtin_print': builtins.print,
+        '__name__': '__main__'
     }
-
-    output_capture = io.StringIO()
-    error_capture = io.StringIO()
-
+    
+    execution_locals = {}
+    output_capture = StringIO()
+    error_capture = StringIO()
+    
     setup_code = """
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Important: configurer Matplotlib pour un environnement non-interactif
 import matplotlib.pyplot as plt
 import seaborn as sns
-import random
-import math
-import statistics
-import scipy
-import sklearn
-import json
-import datetime
-import re
-import os
-import sys
+import random, math, statistics
+import io, base64, sys
 from io import StringIO
-import warnings
+from builtins import print as builtin_print
 
-warnings.filterwarnings('ignore')
+plt.switch_backend('Agg')
+
+# Fonction pour capturer toutes les figures et les convertir en base64
+def get_figure_base64():
+    figures = []
+    for i in plt.get_fignums():
+        fig = plt.figure(i)
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight')
+        buf.seek(0)
+        img_str = base64.b64encode(buf.getvalue()).decode('utf-8')
+        figures.append(img_str)
+    return figures
+
+# Remplacer plt.show() par une fonction personnalisée qui sauvegarde la figure
+original_show = plt.show
+def custom_show(*args, **kwargs):
+    # Ne rien faire, juste conserver la figure en mémoire
+    pass
+plt.show = custom_show
 """
-
+    
+    # Configurer le fichier CSV s'il est fourni
     if csv_content:
+        if not csv_filename:
+            csv_filename = "uploaded.csv"
         setup_code += f"""
-csv_data = '''{csv_content}'''
-df = pd.read_csv(StringIO(csv_data))
+with open('{csv_filename}', 'w', encoding='utf-8') as f:
+    f.write(\"\"\"{csv_content}\"\"\")
 """
+    
+    # Indenter le code pour la gestion d'erreurs
+    indented_code = "\n".join("    " + line for line in clean_code.splitlines())
+    
+    # Préparation du code final à exécuter
+    final_code = f"""
+def custom_print(*args, **kwargs):
+    builtin_print(*args, **kwargs)
+    sys.stdout.flush()
 
+print = custom_print
+
+try:
+{indented_code}
+
+    # Exécuter la fonction main() si elle existe
+    if "main" in locals() and callable(locals()["main"]):
+        try:
+            locals()["main"]()
+        except Exception as e:
+            print(f"Erreur lors de l'exécution de main(): {{str(e)}}")
+            import traceback
+            print(traceback.format_exc())
+except Exception as e:
+    print(f"Erreur d'exécution: {{str(e)}}")
+    import traceback
+    print(traceback.format_exc())
+
+print("\\n--- Exécution terminée ---")
+"""
+    
     try:
         # Exécuter le code de configuration
         exec(setup_code, execution_globals, execution_locals)
         
-        # Exécuter le code principal avec redirection de stdout/stderr
+        # Exécuter le code de l'utilisateur
         with redirect_stdout(output_capture), redirect_stderr(error_capture):
-            exec(code, execution_globals, execution_locals)
+            exec(final_code, execution_globals, execution_locals)
+        
+        output_text = output_capture.getvalue()
+        error_text = error_capture.getvalue()
+        
+        # Capture des figures après l'exécution du code
+
+        figures = []
+        try:
+            # Vérifier si des figures ont été créées
+            if plt.get_fignums():
+                for i in plt.get_fignums():
+                    fig = plt.figure(i)
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                    buf.seek(0)
+                    img_str = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    figures.append(f"data:image/png;base64,{img_str}")
+                plt.close('all')  # Fermer toutes les figures pour libérer la mémoire
+        except Exception as e:
+            error_text += f"\nErreur lors de la capture des graphiques: {str(e)}\n{traceback.format_exc()}"            
+    
 
         return json.dumps({
-            'output': output_capture.getvalue(),
-            'errors': error_capture.getvalue(),
-            'figures': []  # Remplacer par le code de sauvegarde de figures si nécessaire
+            'output': output_text,
+            'errors': error_text,
+            'figures': figures
         })
     except Exception as e:
-        # Capturer l'erreur complète avec traceback
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
         return json.dumps({
             'output': '',
-            'errors': error_msg,
+            'errors': str(e) + "\n" + traceback.format_exc(),
             'figures': []
         })
-
-
 
 
 
