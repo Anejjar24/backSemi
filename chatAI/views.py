@@ -20,6 +20,7 @@ from django.utils.decorators import method_decorator
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 import base64
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
@@ -392,6 +393,31 @@ def test_add_conversation_with_messages(request):
     return JsonResponse({'success': False, 'error': 'Méthode non autorisée'}, status=405)
 
 
+"""
+@csrf_exempt
+def get_user_conversations(request):
+    if request.method == 'GET':
+        if not request.user.is_authenticated:
+            return JsonResponse({'success': False, 'error': 'Utilisateur non authentifié'}, status=401)
+
+        conversations = Conversation.objects.filter(user=request.user).order_by('-updated_at')
+        conv_list = [
+            {
+                'id': conv.id,
+                'title': conv.title,
+                'created_at': conv.created_at.isoformat(),
+                'updated_at': conv.updated_at.isoformat() if conv.updated_at else conv.created_at.isoformat(),
+            }
+            for conv in conversations
+        ]
+
+        return JsonResponse({'success': True, 'conversations': conv_list})
+    
+    return JsonResponse({'success': False, 'error': 'Méthode non autorisée'}, status=405)
+"""
+
+
+
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -511,3 +537,64 @@ def open_user_conversation(request, pk):
         return JsonResponse({'success': False, 'error': 'Conversation introuvable ou non autorisée'}, status=404)
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def add_message_to_conversation(request):
+    try:
+        data = request.data
+        user = request.user
+
+        conversation_id = data.get('conversation')
+        content = data.get('content')
+        sender = data.get('sender', 'user')  # Par défaut 'user'
+
+        if not conversation_id or not content:
+            return JsonResponse({'success': False, 'error': 'conversation et content sont requis'}, status=400)
+
+        # Vérifie que la conversation existe et appartient à l'utilisateur
+        conversation = Conversation.objects.get(id=conversation_id, user=user)
+
+        # Crée le message
+        msg = Message.objects.create(
+            conversation=conversation,
+            sender=sender,
+            content=content,
+            timestamp=timezone.now()
+        )
+
+        return JsonResponse({
+            'success': True,
+            'message': {
+                'id': msg.id,
+                'sender': msg.sender,
+                'content': msg.content,
+                'timestamp': msg.timestamp.isoformat()
+            }
+        })
+
+    except Conversation.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Conversation introuvable ou non autorisée'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def update_conversation_title(request, conversation_id):
+    try:
+        conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+    except Conversation.DoesNotExist:
+        return Response({'error': 'Conversation introuvable'}, status=status.HTTP_404_NOT_FOUND)
+
+    new_title = request.data.get('title')
+    if not new_title:
+        return Response({'error': 'Titre requis'}, status=status.HTTP_400_BAD_REQUEST)
+
+    conversation.title = new_title
+    conversation.save()
+    return Response({'success': True, 'title': conversation.title})
